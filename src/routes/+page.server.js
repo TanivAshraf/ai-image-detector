@@ -5,9 +5,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 // Initialize the Google AI client with our secret key
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-/**
- * Helper function to convert an image buffer to the format Gemini needs
- */
+// Helper function to convert an image buffer to the format Gemini needs
 function fileToGenerativePart(buffer, mimeType) {
   return {
     inlineData: {
@@ -20,60 +18,68 @@ function fileToGenerativePart(buffer, mimeType) {
 export const actions = {
   analyzeImage: async ({ request }) => {
     console.log("-----------------------------------------");
-    console.log("SERVER CODE VERSION: 5.0 - Using Google Gemini Pro Vision.");
+    console.log("SERVER CODE VERSION: 6.0 - Using Gemini with Forensic Prompt.");
     console.log("`analyzeImage` function started at:", new Date().toISOString());
 
     const formData = await request.formData();
     const imageFile = formData.get('imageFile');
     const imageUrl = formData.get('imageUrl');
 
-    let imageBuffer;
-    let mimeType;
-    let originalFilename;
-    let dataUri;
+    let imageBuffer, mimeType, originalFilename, dataUri;
 
     try {
-      // Step 1: Get image data and determine its type
+      // Step 1: Get image data
       if (imageFile && imageFile.size > 0) {
-        console.log(`Processing uploaded file: ${imageFile.name}`);
         imageBuffer = Buffer.from(await imageFile.arrayBuffer());
         mimeType = imageFile.type;
         originalFilename = imageFile.name;
       } else if (imageUrl) {
-        console.log(`Processing image from URL: ${imageUrl}`);
         const response = await fetch(imageUrl);
         if (!response.ok) throw new Error(`Could not fetch image. Status: ${response.status}`);
         imageBuffer = Buffer.from(await response.arrayBuffer());
-        // Guess the MIME type from the URL extension or use a default
         mimeType = response.headers.get('content-type') || 'image/jpeg';
         originalFilename = `from-url-${Date.now()}.jpg`;
       } else {
         throw new Error("No file or URL provided.");
       }
-
       dataUri = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
 
-      // Step 2: Prepare the request for the Gemini API
+      // Step 2: Prepare the NEW "Forensic Expert" prompt for Gemini
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
-      const prompt = "You are a forensic expert specializing in detecting AI-generated images. Analyze the provided image for subtle artifacts of AI generation. Pay close attention to unnatural blending of textures (especially in fabric like the headscarf), the seamlessness of the hairline, and the uniformity of skin texture. Do not be fooled by a high-quality image that looks real at first glance. Based on these specific forensic details, conclude whether the image is REAL or FAKE. Respond with only the single word REAL or the single word FAKE.";
+      
+      const prompt = `You are a world-leading expert in digital image forensics. Your task is to determine if the provided image is a real photograph or a sophisticated AI-generated image.
+
+      Analyze the image for subtle, tell-tale signs of AI generation. Pay extremely close attention to the following areas, which are common points of failure for AI models:
+      1.  **Texture and Fabric:** Scrutinize the headscarf. Do the patterns wrap, fold, and stretch realistically around the contours of the head, or do they appear unnaturally blended, inconsistent, or "painted on"?
+      2.  **Boundaries and Edges:** Examine the boundary between the forehead and the fabric. Is it too perfect, lacking any hint of shadow, stray hairs, or natural transition?
+      3.  **Surface Details:** Look at the skin texture. Does it have the natural micro-imperfections, pores, and subtle variations of a real photograph, or is it overly smooth and uniform?
+
+      Do not be deceived by the overall high quality of the image. Base your final conclusion on a careful analysis of these specific forensic details.
+
+      After your analysis, respond with a JSON object. The object must contain one key: "final_verdict". The value for "final_verdict" must be either the single word "REAL" or the single word "FAKE".`;
+
       const imagePart = fileToGenerativePart(imageBuffer, mimeType);
 
-      console.log("Sending image and prompt to Google Gemini...");
+      console.log("Sending image and FORENSIC prompt to Google Gemini...");
       const result = await model.generateContent([prompt, imagePart]);
       const response = await result.response;
-      const text = response.text().trim().toUpperCase();
+      let text = response.text().trim();
       
-      console.log("Received response from Gemini:", text);
+      // Clean the response to ensure it's valid JSON
+      text = text.replace(/```json/g, '').replace(/```/g, '');
+      console.log("Received raw response from Gemini:", text);
 
-      // Step 3: Format the result
+      // Step 3: Parse the structured JSON response
+      const analysisResult = JSON.parse(text);
+      const verdict = analysisResult.final_verdict.toUpperCase();
+      
       let finalPrediction;
-      if (text.includes("REAL")) {
+      if (verdict === "REAL") {
         finalPrediction = { label: 'real', score: 100 };
-      } else if (text.includes("FAKE")) {
+      } else if (verdict === "FAKE") {
         finalPrediction = { label: 'artificial', score: 100 };
       } else {
-        // If Gemini gives a longer answer, we'll call it inconclusive
-        throw new Error(`Unexpected response from AI: "${text}"`);
+        throw new Error(`Unexpected verdict from AI: "${verdict}"`);
       }
 
       // Step 4: Save to GitHub
@@ -108,7 +114,6 @@ async function saveToGithub(imageData, originalFilename, prediction) {
     body: JSON.stringify({ message: `Analysis: ${prediction.label}`, content: content })
   });
   if (!response.ok) {
-    console.error("Failed to save to GitHub:", await response.json());
     throw new Error("Could not save the image to the repository.");
   }
   const responseData = await response.json();
