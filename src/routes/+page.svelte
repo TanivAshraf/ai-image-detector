@@ -1,68 +1,102 @@
 <script>
-  // This is the JavaScript part of our page
   let analyzing = false;
   let analysisResult = null;
   let errorMessage = null;
-  let imageUrl = '';
+  let fileInput;
 
-  // This 'form' variable will hold the data from our server
-  export let form;
-
-  // This checks if the server sent back a result after we submitted a file/URL
-  $: if (form) {
-    analyzing = false;
-    if (form.success) {
-      analysisResult = form.result;
-      errorMessage = null;
-    } else {
-      errorMessage = form.error;
-      analysisResult = null;
-    }
-  }
-
-  function startAnalysis() {
+  async function analyzeImage(event) {
+    event.preventDefault();
     analyzing = true;
     errorMessage = null;
     analysisResult = null;
+
+    const formData = new FormData(event.target);
+    const imageFile = formData.get('imageFile');
+    const imageUrl = formData.get('imageUrl');
+    
+    let dataUri;
+
+    try {
+      // Get image data as a Data URI
+      if (imageFile && imageFile.size > 0) {
+        dataUri = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = error => reject(error);
+          reader.readAsDataURL(imageFile);
+        });
+      } else if (imageUrl) {
+        // A bit of a trick to convert URL to Data URI via our backend to avoid browser security issues (CORS)
+        const proxyResponse = await fetch('/api/proxy-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: imageUrl })
+        });
+        if(!proxyResponse.ok) throw new Error("Could not fetch image from URL.");
+        const { dataUri: proxiedUri } = await proxyResponse.json();
+        dataUri = proxiedUri;
+      } else {
+        throw new Error("Please upload a file or provide a URL.");
+      }
+
+      // Call our new Python Forensic Lab
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUri })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Analysis failed in the Python backend.");
+      }
+      
+      const result = await response.json();
+      analysisResult = { prediction: result.prediction, imageUrl: dataUri };
+      
+      // Now, save the result to GitHub
+      const saveResponse = await fetch('', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ imageDataUri: dataUri, prediction: result.prediction})
+      });
+      const saveData = await saveResponse.json();
+      if(saveData.success) {
+        analysisResult.fileUrl = saveData.fileUrl;
+      }
+
+    } catch (err) {
+      errorMessage = err.message;
+    } finally {
+      analyzing = false;
+    }
   }
 </script>
 
 <main>
   <header>
-    <h1>AI Detective v2 🕵️</h1>
+    <h1>AI Detective 🕵️</h1>
     <p>Is your image real or AI-generated? Let's find out.</p>
   </header>
 
-  <!-- Form for submitting files or URLs -->
-  <form method="POST" action="?/analyzeImage" on:submit={startAnalysis} enctype="multipart/form-data">
-    
-    <!-- File Upload Section -->
+  <form on:submit={analyzeImage}>
     <div class="input-group">
       <label for="file-upload">Upload an image from your device:</label>
-      <input type="file" id="file-upload" name="imageFile" accept="image/*" />
+      <input type="file" id="file-upload" name="imageFile" accept="image/*" bind:this={fileInput} />
     </div>
-
     <p class="or-divider">OR</p>
-    
-    <!-- URL Input Section -->
     <div class="input-group">
       <label for="image-url">Paste an image URL:</label>
-      <input type="url" id="image-url" name="imageUrl" placeholder="https://example.com/image.jpg" bind:value={imageUrl} />
+      <input type="url" id="image-url" name="imageUrl" placeholder="https://example.com/image.jpg" />
     </div>
-
     <button type="submit" disabled={analyzing}>
-      {#if analyzing}
-        Analyzing...
-      {:else}
-        Analyze Image
-      {/if}
+      {#if analyzing}Analyzing...{:else}Analyze Image{/if}
     </button>
   </form>
 
-  <!-- Results Display Section -->
   {#if analyzing}
     <div class="loader"></div>
-    <p class="status">Contacting the expert... please wait.</p>
+    <p class="status">Performing forensic analysis... please wait.</p>
   {/if}
 
   {#if errorMessage}
@@ -83,12 +117,13 @@
          {/if}
          <p class="confidence">Confidence: {analysisResult.prediction.score.toFixed(2)}%</p>
       </div>
-      <p class="info">Image and results saved. <a href={analysisResult.fileUrl} target="_blank">View on GitHub</a></p>
+      {#if analysisResult.fileUrl}
+
+      {/if}
     </div>
   {/if}
 </main>
 
-<!-- This is the styling to make it look nice -->
 <style>
   main { max-width: 600px; margin: 2rem auto; font-family: sans-serif; text-align: center; padding: 1rem; background: #f9f9f9; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
   header { margin-bottom: 2rem; }
