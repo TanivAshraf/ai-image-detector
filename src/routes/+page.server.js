@@ -54,7 +54,7 @@ export const actions = {
       dataUri = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
 
       // Step 2: Prepare the request for the Gemini API
-      const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" });
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
       const prompt = "Analyze this image. Is it a real photograph or is it AI-generated? Please respond with only the single word REAL or the single word FAKE.";
       const imagePart = fileToGenerativePart(imageBuffer, mimeType);
 
