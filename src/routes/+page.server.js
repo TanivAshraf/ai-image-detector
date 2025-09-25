@@ -1,7 +1,7 @@
-// NEW: Import the Replicate API token instead of the Hugging Face one
+// Import the secret keys we set up in Vercel
 import { REPLICATE_API_TOKEN, GITHUB_PAT, GITHUB_REPO_FOR_UPLOADS } from '$env/static/private';
 
-// This is a helper function to make Replicate API calls cleaner
+// Helper function to make Replicate API calls cleaner
 async function callReplicateAPI(endpoint, method, body) {
   const response = await fetch(`https://api.replicate.com/v1/${endpoint}`, {
     method,
@@ -25,7 +25,7 @@ async function callReplicateAPI(endpoint, method, body) {
 export const actions = {
   analyzeImage: async ({ request }) => {
     console.log("-----------------------------------------");
-    console.log("SERVER CODE VERSION: 2.1 - Now with correct Replicate ID."); 
+    console.log("SERVER CODE VERSION: 3.0 - Using adirik/real-or-fake model.");
     console.log("`analyzeImage` function started using REPLICATE at:", new Date().toISOString());
 
     const formData = await request.formData();
@@ -55,11 +55,12 @@ export const actions = {
       
       const dataUri = `data:image/jpeg;base64,${imageBase64}`;
 
-      // Step 2: Call the Replicate API to start the prediction job
-      console.log("Starting prediction job on Replicate...");
+      // Step 2: Call the Replicate API to start the prediction job with the NEW MODEL
+      console.log("Starting prediction job on Replicate with new model...");
       const startResponse = await callReplicateAPI('predictions', 'POST', {
-        version: "a8c22751f7814b0885e51147e0643a34a41f674591a0f9b6c8106f47f26154b0",
-        input: { image: dataUri }
+        // --- THIS IS THE FINAL, CORRECT MODEL AND VERSION ---
+        version: "313a55db1148f9540c50174291882f0672e816a75a7f920f01c40248383f9888",
+        input: { image_path: dataUri } // This model uses 'image_path'
       });
       
       let predictionResult;
@@ -72,7 +73,7 @@ export const actions = {
         const statusResponse = await callReplicateAPI(`predictions/${startResponse.id}`, 'GET');
         
         if (statusResponse.status === 'succeeded') {
-          console.log("Prediction succeeded!");
+          console.log("Prediction succeeded! Output:", statusResponse.output);
           predictionResult = statusResponse.output;
           break;
         } else if (statusResponse.status === 'failed' || statusResponse.status === 'canceled') {
@@ -88,9 +89,10 @@ export const actions = {
       }
       
       // Step 4: Format the result and save to GitHub
+      // This model returns a simple string: "REAL" or "FAKE"
       const finalPrediction = {
-        label: predictionResult.label,
-        score: (predictionResult.label === 'real' ? 1 - predictionResult.fake_confidence : predictionResult.fake_confidence) * 100
+        label: predictionResult === "REAL" ? 'real' : 'artificial',
+        score: 100.0 // This model doesn't provide a confidence score, so we'll use 100
       };
 
       console.log("Saving image and results to GitHub...");
@@ -114,7 +116,6 @@ export const actions = {
     }
   }
 };
-
 
 // This helper function to save to GitHub remains the same
 async function saveToGithub(imageData, originalFilename, prediction) {
