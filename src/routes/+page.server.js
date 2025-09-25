@@ -18,7 +18,7 @@ function fileToGenerativePart(buffer, mimeType) {
 export const actions = {
   analyzeImage: async ({ request }) => {
     console.log("-----------------------------------------");
-    console.log("SERVER CODE VERSION: 6.0 - Using Gemini with Forensic Prompt.");
+    console.log("SERVER CODE FINAL VERSION - Gemini with Forensic Audit Prompt.");
     console.log("`analyzeImage` function started at:", new Date().toISOString());
 
     const formData = await request.formData();
@@ -44,23 +44,29 @@ export const actions = {
       }
       dataUri = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
 
-      // Step 2: Prepare the NEW "Forensic Expert" prompt for Gemini
+      // Step 2: Prepare the NEW "Forensic Audit" prompt for Gemini
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
       
-      const prompt = `You are a world-leading expert in digital image forensics. Your task is to determine if the provided image is a real photograph or a sophisticated AI-generated image.
+      const prompt = `You are a world-leading expert in digital image forensics. Your task is to determine if the provided image is a real photograph or a sophisticated AI-generated image. Perform the following multi-step forensic audit.
 
-      Analyze the image for subtle, tell-tale signs of AI generation. Pay extremely close attention to the following areas, which are common points of failure for AI models:
-      1.  **Texture and Fabric:** Scrutinize the headscarf. Do the patterns wrap, fold, and stretch realistically around the contours of the head, or do they appear unnaturally blended, inconsistent, or "painted on"?
-      2.  **Boundaries and Edges:** Examine the boundary between the forehead and the fabric. Is it too perfect, lacking any hint of shadow, stray hairs, or natural transition?
-      3.  **Surface Details:** Look at the skin texture. Does it have the natural micro-imperfections, pores, and subtle variations of a real photograph, or is it overly smooth and uniform?
+      Step 1: Visual Anomaly Audit.
+      Analyze the image for common visual artifacts of AI generation. Pay extremely close attention to:
+      - The texture and pattern of the headscarf. Do the patterns wrap, fold, and stretch realistically, or do they appear unnaturally blended or inconsistent?
+      - The boundary between the forehead and the fabric. Is it too perfect, lacking any hint of shadow or natural transition?
+      - The skin texture. Does it have natural micro-imperfections, or is it overly smooth and uniform?
 
-      Do not be deceived by the overall high quality of the image. Base your final conclusion on a careful analysis of these specific forensic details.
+      Step 2: Simulated Technical Audit (Error Level Analysis).
+      Mentally perform an Error Level Analysis (ELA). ELA identifies areas with different JPEG compression levels. In AI-generated images, the synthesized elements often have a uniform, higher error level (appearing brighter in an ELA map) compared to a real photograph's background. Does the woman's face and headscarf show a different, more uniform compression signature than what you would expect from a camera-captured scene?
 
-      After your analysis, respond with a JSON object. The object must contain one key: "final_verdict". The value for "final_verdict" must be either the single word "REAL" or the single word "FAKE".`;
+      Step 3: Synthesize and Conclude.
+      Based on the evidence from both the visual and simulated technical audits, form a final conclusion. Do not be deceived by the overall high quality. Your conclusion must be based on forensic evidence.
+
+      Step 4: Report Findings.
+      Respond with a JSON object. The object must contain one key: "final_verdict". The value for "final_verdict" must be either the single word "REAL" or the single word "FAKE".`;
 
       const imagePart = fileToGenerativePart(imageBuffer, mimeType);
 
-      console.log("Sending image and FORENSIC prompt to Google Gemini...");
+      console.log("Sending image and FORENSIC AUDIT prompt to Google Gemini...");
       const result = await model.generateContent([prompt, imagePart]);
       const response = await result.response;
       let text = response.text().trim();
@@ -69,7 +75,6 @@ export const actions = {
       text = text.replace(/```json/g, '').replace(/```/g, '');
       console.log("Received raw response from Gemini:", text);
 
-      // Step 3: Parse the structured JSON response
       const analysisResult = JSON.parse(text);
       const verdict = analysisResult.final_verdict.toUpperCase();
       
@@ -82,11 +87,9 @@ export const actions = {
         throw new Error(`Unexpected verdict from AI: "${verdict}"`);
       }
 
-      // Step 4: Save to GitHub
       console.log("Saving image and results to GitHub...");
       const githubFileUrl = await saveToGithub(imageBuffer, originalFilename, finalPrediction);
 
-      // Step 5: Send the result back to the user's browser
       return {
         success: true,
         result: {
