@@ -2,7 +2,6 @@
   let analyzing = false;
   let analysisResult = null;
   let errorMessage = null;
-  let fileInput;
 
   async function analyzeImage(event) {
     event.preventDefault();
@@ -14,56 +13,65 @@
     const imageFile = formData.get('imageFile');
     const imageUrl = formData.get('imageUrl');
     
-    let dataUri;
+    let originalDataUri;
 
     try {
-      // Get image data as a Data URI
+      // Step 1: Get the original image data as a Data URI
       if (imageFile && imageFile.size > 0) {
-        dataUri = await new Promise((resolve, reject) => {
+        originalDataUri = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result);
           reader.onerror = error => reject(error);
           reader.readAsDataURL(imageFile);
         });
       } else if (imageUrl) {
-        // A bit of a trick to convert URL to Data URI via our backend to avoid browser security issues (CORS)
+        // We need a backend proxy to get around browser security (CORS) for URLs
         const proxyResponse = await fetch('/api/proxy-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url: imageUrl })
         });
-        if(!proxyResponse.ok) throw new Error("Could not fetch image from URL.");
+        if(!proxyResponse.ok) throw new Error("Could not fetch image from URL via proxy.");
         const { dataUri: proxiedUri } = await proxyResponse.json();
-        dataUri = proxiedUri;
+        originalDataUri = proxiedUri;
       } else {
         throw new Error("Please upload a file or provide a URL.");
       }
 
-      // Call our new Python Forensic Lab
-      const response = await fetch('/api/analyze', {
+      // --- NEW: Step 2: Perform the "Compression Stress Test" using a canvas ---
+      const stressedDataUri = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          // Re-compress the image at 90% JPEG quality
+          resolve(canvas.toDataURL('image/jpeg', 0.9)); 
+        };
+        img.onerror = reject;
+        img.src = originalDataUri;
+      });
+
+      // Step 3: Call our SvelteKit backend with the STRESSED image data
+      const response = await fetch('', { // Calls the +server.js in the same folder
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: dataUri })
+        body: JSON.stringify({ stressedImageDataUri: stressedDataUri })
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Analysis failed in the Python backend.");
+        throw new Error(errorData.error || "Analysis failed in the backend.");
       }
       
       const result = await response.json();
-      analysisResult = { prediction: result.prediction, imageUrl: dataUri };
-      
-      // Now, save the result to GitHub
-      const saveResponse = await fetch('', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ imageDataUri: dataUri, prediction: result.prediction})
-      });
-      const saveData = await saveResponse.json();
-      if(saveData.success) {
-        analysisResult.fileUrl = saveData.fileUrl;
-      }
+      analysisResult = { 
+        prediction: result.prediction, 
+        imageUrl: originalDataUri, // Show the user the original image
+        fileUrl: result.fileUrl 
+      };
 
     } catch (err) {
       errorMessage = err.message;
@@ -75,14 +83,14 @@
 
 <main>
   <header>
-    <h1>AI Detective 🕵️</h1>
+    <h1>AI Detective v3 🕵️</h1>
     <p>Is your image real or AI-generated? Let's find out.</p>
   </header>
 
   <form on:submit={analyzeImage}>
     <div class="input-group">
       <label for="file-upload">Upload an image from your device:</label>
-      <input type="file" id="file-upload" name="imageFile" accept="image/*" bind:this={fileInput} />
+      <input type="file" id="file-upload" name="imageFile" accept="image/*" />
     </div>
     <p class="or-divider">OR</p>
     <div class="input-group">
@@ -90,19 +98,16 @@
       <input type="url" id="image-url" name="imageUrl" placeholder="https://example.com/image.jpg" />
     </div>
     <button type="submit" disabled={analyzing}>
-      {#if analyzing}Analyzing...{:else}Analyze Image{/if}
+      {#if analyzing}Performing forensic analysis...{:else}Analyze Image{/if}
     </button>
   </form>
 
   {#if analyzing}
     <div class="loader"></div>
-    <p class="status">Performing forensic analysis... please wait.</p>
   {/if}
 
   {#if errorMessage}
-    <div class="result error-box">
-      <p><strong>Error:</strong> {errorMessage}</p>
-    </div>
+    <div class="result error-box"><p><strong>Error:</strong> {errorMessage}</p></div>
   {/if}
 
   {#if analysisResult}
@@ -117,9 +122,7 @@
          {/if}
          <p class="confidence">Confidence: {analysisResult.prediction.score.toFixed(2)}%</p>
       </div>
-      {#if analysisResult.fileUrl}
-
-      {/if}
+      <p class="info">Image and results saved. <a href={analysisResult.fileUrl} target="_blank">View on GitHub</a></p>
     </div>
   {/if}
 </main>
