@@ -57,7 +57,7 @@ export const actions = {
       // Step 2: Call the Replicate API to start the prediction job
       console.log("Starting prediction job on Replicate...");
       const startResponse = await callReplicateAPI('predictions', 'POST', {
-        version: "02b3c535ab1e0b0e4f2270908ce91060932515a31a52e00830a8b417b1b392b1",
+        version: "a8c22751f7814b0885e51147e0643a34a41f674591a0f9b6c8106f47f26154b0",
         input: { image: dataUri }
       });
       
