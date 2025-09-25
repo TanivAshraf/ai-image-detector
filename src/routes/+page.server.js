@@ -1,70 +1,91 @@
-// Import the secret keys we set up in Vercel
-import { HF_API_TOKEN, GITHUB_PAT, GITHUB_REPO_FOR_UPLOADS } from '$env/static/private';
+// Import the Gemini API key and the Google AI SDK
+import { GEMINI_API_KEY, GITHUB_PAT, GITHUB_REPO_FOR_UPLOADS } from '$env/static/private';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const AI_MODEL_URL = "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector";
+// Initialize the Google AI client with our secret key
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 /**
- * This is the main server-side function that handles our form submission.
+ * Helper function to convert an image buffer to the format Gemini needs
  */
+function fileToGenerativePart(buffer, mimeType) {
+  return {
+    inlineData: {
+      data: buffer.toString("base64"),
+      mimeType
+    },
+  };
+}
+
 export const actions = {
   analyzeImage: async ({ request }) => {
     console.log("-----------------------------------------");
-    console.log("SERVER CODE VERSION: 4.0 - Reverting to Hugging Face.");
+    console.log("SERVER CODE VERSION: 5.0 - Using Google Gemini Pro Vision.");
     console.log("`analyzeImage` function started at:", new Date().toISOString());
 
     const formData = await request.formData();
     const imageFile = formData.get('imageFile');
     const imageUrl = formData.get('imageUrl');
 
-    let imageData;
-    let filename;
+    let imageBuffer;
+    let mimeType;
+    let originalFilename;
+    let dataUri;
 
     try {
-      // Step 1: Get the image data
+      // Step 1: Get image data and determine its type
       if (imageFile && imageFile.size > 0) {
         console.log(`Processing uploaded file: ${imageFile.name}`);
-        imageData = Buffer.from(await imageFile.arrayBuffer());
-        filename = imageFile.name;
+        imageBuffer = Buffer.from(await imageFile.arrayBuffer());
+        mimeType = imageFile.type;
+        originalFilename = imageFile.name;
       } else if (imageUrl) {
         console.log(`Processing image from URL: ${imageUrl}`);
         const response = await fetch(imageUrl);
-        if (!response.ok) throw new Error(`Could not fetch image from URL. Status: ${response.status}`);
-        imageData = Buffer.from(await response.arrayBuffer());
-        filename = `from-url-${Date.now()}.jpg`;
+        if (!response.ok) throw new Error(`Could not fetch image. Status: ${response.status}`);
+        imageBuffer = Buffer.from(await response.arrayBuffer());
+        // Guess the MIME type from the URL extension or use a default
+        mimeType = response.headers.get('content-type') || 'image/jpeg';
+        originalFilename = `from-url-${Date.now()}.jpg`;
       } else {
         throw new Error("No file or URL provided.");
       }
 
-      // Step 2: Call the AI "Brain" (Hugging Face)
-      console.log(`Calling Hugging Face API at: ${AI_MODEL_URL}`);
-      const aiResponse = await fetch(AI_MODEL_URL, {
-        headers: { Authorization: `Bearer ${HF_API_TOKEN}` },
-        method: "POST",
-        body: imageData,
-      });
+      dataUri = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
 
-      if (!aiResponse.ok) {
-         console.error("AI API response was NOT OK. Reading response body as text...");
-         const errorBody = await aiResponse.text();
-         console.error("--- HUGGING FACE ERROR RESPONSE ---");
-         console.error(errorBody);
-         console.error("---------------------------------");
-         throw new Error(`The AI model returned an error. Status: ${aiResponse.status}`);
-      }
+      // Step 2: Prepare the request for the Gemini API
+      const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" });
+      const prompt = "Analyze this image. Is it a real photograph or is it AI-generated? Please respond with only the single word REAL or the single word FAKE.";
+      const imagePart = fileToGenerativePart(imageBuffer, mimeType);
+
+      console.log("Sending image and prompt to Google Gemini...");
+      const result = await model.generateContent([prompt, imagePart]);
+      const response = await result.response;
+      const text = response.text().trim().toUpperCase();
       
-      const analysis = await aiResponse.json();
-      const prediction = getTopPrediction(analysis);
+      console.log("Received response from Gemini:", text);
 
-      // Step 3: Save to GitHub
+      // Step 3: Format the result
+      let finalPrediction;
+      if (text.includes("REAL")) {
+        finalPrediction = { label: 'real', score: 100 };
+      } else if (text.includes("FAKE")) {
+        finalPrediction = { label: 'artificial', score: 100 };
+      } else {
+        // If Gemini gives a longer answer, we'll call it inconclusive
+        throw new Error(`Unexpected response from AI: "${text}"`);
+      }
+
+      // Step 4: Save to GitHub
       console.log("Saving image and results to GitHub...");
-      const githubFileUrl = await saveToGithub(imageData, filename, prediction);
+      const githubFileUrl = await saveToGithub(imageBuffer, originalFilename, finalPrediction);
 
-      // Step 4: Send the result back to the browser
+      // Step 5: Send the result back to the user's browser
       return {
         success: true,
         result: {
-          prediction,
-          imageUrl: `data:image/jpeg;base64,${imageData.toString('base64')}`,
+          prediction: finalPrediction,
+          imageUrl: dataUri,
           fileUrl: githubFileUrl
         }
       };
@@ -77,21 +98,9 @@ export const actions = {
   }
 };
 
-// Helper function to find the prediction with the highest score
-function getTopPrediction(analysis) {
-  if (!analysis || analysis.length === 0) throw new Error("AI analysis returned an empty result.");
-  let topPrediction = analysis.reduce((prev, current) => (prev.score > current.score) ? prev : current);
-  topPrediction.score = topPrediction.score * 100;
-  return topPrediction;
-}
-
-// Helper function to save files to GitHub
+// This helper function to save to GitHub remains the same
 async function saveToGithub(imageData, originalFilename, prediction) {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const safeFilename = originalFilename.replace(/[^a-zA-Z0-9.]/g, '_');
-  const newFilename = `${timestamp}_${safeFilename}`;
-  const repoPath = `uploads/${newFilename}`;
-  const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO_FOR_UPLOADS}/contents/${repoPath}`;
+  const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO_FOR_UPLOADS}/contents/uploads/${new Date().toISOString()}_${originalFilename}`;
   const content = imageData.toString('base64');
   const response = await fetch(GITHUB_API_URL, {
     method: 'PUT',
