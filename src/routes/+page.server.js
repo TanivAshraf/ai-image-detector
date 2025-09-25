@@ -55,7 +55,7 @@ export const actions = {
 
       // Step 2: Prepare the request for the Gemini API
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
-      const prompt = "Analyze this image. Is it a real photograph or is it AI-generated? Please respond with only the single word REAL or the single word FAKE.";
+      const prompt = "You are a forensic expert specializing in detecting AI-generated images. Analyze the provided image for subtle artifacts of AI generation. Pay close attention to unnatural blending of textures (especially in fabric like the headscarf), the seamlessness of the hairline, and the uniformity of skin texture. Do not be fooled by a high-quality image that looks real at first glance. Based on these specific forensic details, conclude whether the image is REAL or FAKE. Respond with only the single word REAL or the single word FAKE.";
       const imagePart = fileToGenerativePart(imageBuffer, mimeType);
 
       console.log("Sending image and prompt to Google Gemini...");
