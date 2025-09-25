@@ -25,6 +25,7 @@ async function callReplicateAPI(endpoint, method, body) {
 export const actions = {
   analyzeImage: async ({ request }) => {
     console.log("-----------------------------------------");
+    console.log("SERVER CODE VERSION: 2.1 - Now with correct Replicate ID."); 
     console.log("`analyzeImage` function started using REPLICATE at:", new Date().toISOString());
 
     const formData = await request.formData();
