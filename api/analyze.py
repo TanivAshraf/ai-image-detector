@@ -1,3 +1,7 @@
+# Vercel Python Version 3.12
+import os
+from http.server import BaseHTTPRequestHandler
+# ... rest of the file
 import os
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs
