@@ -29,7 +29,7 @@
 
 <main>
   <header>
-    <h1>AI Detective 🕵️</h1>
+    <h1>AI Detective v2 🕵️</h1>
     <p>Is your image real or AI-generated? Let's find out.</p>
   </header>
 
