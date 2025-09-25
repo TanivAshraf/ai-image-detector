@@ -122,7 +122,6 @@
          {/if}
          <p class="confidence">Confidence: {analysisResult.prediction.score.toFixed(2)}%</p>
       </div>
-      <p class="info">Image and results saved. <a href={analysisResult.fileUrl} target="_blank">View on GitHub</a></p>
     </div>
   {/if}
 </main>
