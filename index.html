@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Image Detector</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; flex-direction: column; height: 100vh; margin: 0; background-color: #f4f7f6; color: #333; }
+        #container { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1); text-align: center; width: 90%; max-width: 500px; }
+        h1 { margin-top: 0; color: #2c3e50; }
+        p { color: #555; }
+        input[type="file"] { border: 2px dashed #ccc; padding: 20px; border-radius: 5px; cursor: pointer; display: block; width: calc(100% - 44px); margin: 20px 0; }
+        button { background-color: #3498db; color: white; border: none; padding: 15px 30px; border-radius: 5px; font-size: 16px; cursor: pointer; transition: background-color 0.3s; }
+        button:disabled { background-color: #a9a9a9; cursor: not-allowed; }
+        button:hover:not(:disabled) { background-color: #2980b9; }
+        #result { margin-top: 30px; font-size: 1.2em; font-weight: bold; min-height: 50px; }
+        .real { color: #27ae60; }
+        .ai { color: #c0392b; }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>AI Image Detector</h1>
+        <p>Upload an image to determine if it's real or AI-generated.</p>
+        <input type="file" id="imageUpload" accept="image/*">
+        <button id="detectButton">Detect</button>
+        <div id="result"></div>
+    </div>
+    <script>
+        const imageUpload = document.getElementById('imageUpload');
+        const detectButton = document.getElementById('detectButton');
+        const resultDiv = document.getElementById('result');
+        detectButton.addEventListener('click', async () => {
+            const file = imageUpload.files[0];
+            if (!file) {
+                resultDiv.innerHTML = '<span class="ai">Please select an image first.</span>';
+                return;
+            }
+            resultDiv.innerHTML = 'Analyzing... Please wait.';
+            detectButton.disabled = true;
+            detectButton.innerText = 'Working...';
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+                const response = await fetch('/api/detect', { method: 'POST', body: formData });
+                if (!response.ok) throw new Error('Something went wrong. Please try again.');
+                const data = await response.json();
+                if (data.prediction === 'Real') {
+                    resultDiv.innerHTML = `<span class="real">Prediction: ${data.prediction}</span><br><span>Confidence: ${data.confidence}</span>`;
+                } else {
+                    resultDiv.innerHTML = `<span class="ai">Prediction: ${data.prediction}</span><br><span>Confidence: ${data.confidence}</span>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<span class="ai">Error: ${error.message}</span>`;
+            } finally {
+                detectButton.disabled = false;
+                detectButton.innerText = 'Detect';
+            }
+        });
+    </script>
+</body>
+</html>
