@@ -1,9 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 import logging
 from io import BytesIO
-import torch
 from PIL import Image
-from transformers import AutoImageProcessor, AutoModelForImageClassification
 
 # --- CONFIGURATION ---
 CONFIDENCE_THRESHOLD = 0.80
@@ -13,72 +11,70 @@ logging.basicConfig(level=logging.INFO)
 # --- SETUP FASTAPI APP ---
 app = FastAPI()
 
-# --- MODIFICATION START ---
-# We initialize the model and processor as None.
-# They will only be loaded into memory when the first request comes in.
-# This prevents the "Out of Memory" error during Vercel's build process.
+# --- MODEL CACHING ---
+# We start with None. The model will be loaded and stored here on the first API call.
 model = None
 processor = None
 
-def load_model():
-    """Loads the model and processor on-demand."""
+def load_model_on_demand():
+    """
+    Loads the model and processor. Heavy libraries are imported here to prevent
+    Vercel from running out of memory during the build process.
+    """
     global model, processor
-    if model is None or processor is None:
-        logging.info(f"Cold start: Loading model '{MODEL_NAME}' for the first time...")
-        try:
-            processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
-            model = AutoModelForImageClassification.from_pretrained(MODEL_NAME)
-            logging.info("✅ Model and processor loaded successfully!")
-        except Exception as e:
-            logging.error(f"❌ Failed to load model: {e}")
-            # If loading fails, we set them back to None to allow a retry on the next request.
-            model, processor = None, None
-# --- MODIFICATION END ---
+    # If the model is already loaded, do nothing.
+    if model is not None:
+        return
 
-# --- IMAGE CLASSIFICATION LOGIC ---
-def classify_image_logic(image_bytes):
-    # This function now assumes the model is loaded.
-    if not model or not processor:
-        raise RuntimeError("Model is not available. Check logs for loading errors.")
+    logging.info(f"Cold start: Loading model '{MODEL_NAME}'...")
     try:
-        image = Image.open(BytesIO(image_bytes)).convert("RGB")
-    except Exception as e:
-        raise ValueError("Invalid or corrupt image file.")
-
-    inputs = processor(images=image, return_tensors="pt")
-    with torch.no_grad():
-        outputs = model(**inputs)
-    
-    probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
-    real_confidence = probabilities[0][0].item()
-    ai_confidence = probabilities[0][1].item()
-
-    if real_confidence >= CONFIDENCE_THRESHOLD:
-        prediction = "Real"
-        final_confidence = real_confidence
-    else:
-        prediction = "AI Generated"
-        final_confidence = ai_confidence
+        # --- CRITICAL FIX: Import heavy libraries only when needed ---
+        from transformers import AutoImageProcessor, AutoModelForClassification
+        import torch
         
-    return {"prediction": prediction, "confidence": f"{final_confidence:.2%}"}
+        processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
+        model = AutoModelForClassification.from_pretrained(MODEL_NAME)
+        logging.info("✅ Model and processor loaded successfully!")
+    except Exception as e:
+        logging.error(f"❌ Failed to load model: {e}")
+        raise RuntimeError(f"Could not load model: {e}")
 
 # --- API ENDPOINT ---
 @app.post("/api/detect")
 async def detect(file: UploadFile = File(...)):
-    # --- MODIFICATION ---
-    # We ensure the model is loaded before processing the image.
-    load_model() 
+    # Ensure the model is loaded before we proceed.
+    try:
+        load_model_on_demand()
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) # 503 Service Unavailable
 
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File is not an image.")
+    
     try:
         image_bytes = await file.read()
-        result = classify_image_logic(image_bytes)
-        return result
-    except (RuntimeError, ValueError) as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-# --- ROOT ENDPOINT FOR VERCEL HEALTH CHECK ---
-@app.get("/")
-def root():
-    return {"status": "ok"}
+        # Now we can safely use the globally loaded model and processor
+        inputs = processor(images=image, return_tensors="pt")
+        
+        # --- No gradients needed, saves memory ---
+        with torch.no_grad():
+            outputs = model(**inputs)
+        
+        probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
+        real_confidence = probabilities[0][0].item()
+
+        if real_confidence >= CONFIDENCE_THRESHOLD:
+            prediction = "Real"
+            final_confidence = real_confidence
+        else:
+            prediction = "AI Generated"
+            # For AI, show the AI confidence score
+            final_confidence = probabilities[0][1].item()
+        
+        return {"prediction": prediction, "confidence": f"{final_confidence:.2%}"}
+
+    except Exception as e:
+        logging.error(f"Error during classification: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process image.")
