@@ -13,20 +13,33 @@ logging.basicConfig(level=logging.INFO)
 # --- SETUP FASTAPI APP ---
 app = FastAPI()
 
-# --- LOAD THE AI MODEL (runs only once on startup) ---
-try:
-    logging.info(f"Loading model '{MODEL_NAME}'...")
-    processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
-    model = AutoModelForImageClassification.from_pretrained(MODEL_NAME)
-    logging.info("✅ Model and processor loaded successfully!")
-except Exception as e:
-    logging.error(f"❌ Failed to load model: {e}")
-    processor, model = None, None
+# --- MODIFICATION START ---
+# We initialize the model and processor as None.
+# They will only be loaded into memory when the first request comes in.
+# This prevents the "Out of Memory" error during Vercel's build process.
+model = None
+processor = None
+
+def load_model():
+    """Loads the model and processor on-demand."""
+    global model, processor
+    if model is None or processor is None:
+        logging.info(f"Cold start: Loading model '{MODEL_NAME}' for the first time...")
+        try:
+            processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
+            model = AutoModelForImageClassification.from_pretrained(MODEL_NAME)
+            logging.info("✅ Model and processor loaded successfully!")
+        except Exception as e:
+            logging.error(f"❌ Failed to load model: {e}")
+            # If loading fails, we set them back to None to allow a retry on the next request.
+            model, processor = None, None
+# --- MODIFICATION END ---
 
 # --- IMAGE CLASSIFICATION LOGIC ---
 def classify_image_logic(image_bytes):
+    # This function now assumes the model is loaded.
     if not model or not processor:
-        raise RuntimeError("Model is not loaded.")
+        raise RuntimeError("Model is not available. Check logs for loading errors.")
     try:
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
     except Exception as e:
@@ -52,6 +65,10 @@ def classify_image_logic(image_bytes):
 # --- API ENDPOINT ---
 @app.post("/api/detect")
 async def detect(file: UploadFile = File(...)):
+    # --- MODIFICATION ---
+    # We ensure the model is loaded before processing the image.
+    load_model() 
+
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File is not an image.")
     try:
